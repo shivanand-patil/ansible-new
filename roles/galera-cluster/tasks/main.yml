@@ -1,0 +1,35 @@
+- name: Install MariaDB Galera Cluster
+  hosts: nodes
+  become: true  # Optionally, if your tasks require elevated privileges
+  tasks:
+    - name: Copy Galera config file
+      template:
+        src: cluster.cnf.j2
+        dest: "/etc/mysql/conf.d/galera.cnf"
+      notify: Restart MariaDB
+
+    - name: Check replication status
+      command: "mysql -e 'SHOW STATUS LIKE \"wsrep_%\";'"
+      register: replication_status
+      ignore_errors: yes
+
+    - name: Stop MariaDB servers
+      service:
+        name: mysql
+        state: stopped
+
+    - name: Bootstrap new Galera Cluster
+      command: "galera_new_cluster"
+      when: "'wsrep_cluster_size' not in replication_status.stdout"
+
+    - name: Start MariaDB servers on other nodes
+      service:
+        name: mysql
+        state: started
+      when: "'wsrep_cluster_size' in replication_status.stdout and replication_status.stdout_lines | length > 1"
+
+  handlers:
+    - name: Restart MariaDB
+      service:
+        name: mysql
+
