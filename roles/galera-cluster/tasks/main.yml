@@ -1,35 +1,35 @@
-- name: Install MariaDB Galera Cluster
-  hosts: nodes
-  become: true  # Optionally, if your tasks require elevated privileges
-  tasks:
-    - name: Copy Galera config file
-      template:
-        src: cluster.cnf.j2
-        dest: "/etc/mysql/conf.d/galera.cnf"
-      notify: Restart MariaDB
+---
+# Copy cluster.cnf file to all nodes
+- name: Copy Galera config
+  template:
+      src: cluster.cnf.j2
+      dest: /etc/mysql/conf.d/galera.cnf
+      owner: root
+      mode: 0644
+      force: no
 
-    - name: Check replication status
-      command: "mysql -e 'SHOW STATUS LIKE \"wsrep_%\";'"
-      register: replication_status
-      ignore_errors: yes
+# Check for Galera idempotency
+- name: Check for Galera idempotency
+  command: /usr/bin/mysql -u root -e "SHOW STATUS LIKE 'wsrep_cluster_size'"
+  register: gal_stat_str
+  when: ansible_default_ipv4.address == groups['nodes'][0]
 
-    - name: Stop MariaDB servers
-      service:
-        name: mysql
-        state: stopped
+- set_fact:
+    galera_stat: "{{ gal_stat_str.stdout.split('\t').2 }}"
+  when: galera_stat is defined
 
-    - name: Bootstrap new Galera Cluster
-      command: "galera_new_cluster"
-      when: "'wsrep_cluster_size' not in replication_status.stdout"
+# Stop MariaDB on all nodes
+- name: Stop MariaDB on all nodes
+  service: name=mariadb state=stopped
 
-    - name: Start MariaDB servers on other nodes
-      service:
-        name: mysql
-        state: started
-      when: "'wsrep_cluster_size' in replication_status.stdout and replication_status.stdout_lines | length > 1"
+# Bootstrap first MariaDB Galera cluster node
+- name: Bootstrap first MariaDB Galera cluster node
+  command: galera_new_cluster
+  when: 
+    - ansible_default_ipv4.address == groups['nodes'][0]
+    - galera_stat == '0'
 
-  handlers:
-    - name: Restart MariaDB
-      service:
-        name: mysql
+# Start MariaDB on all nodes
+- name: Start MariaDB on all nodes
+  service: name=mariadb state=started
 
